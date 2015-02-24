@@ -7,6 +7,7 @@ Bound by terminal window height and width.
 ## Usage
 
 Just run `gameoflife`
+`CTRL+C` to exit
 
 ## Dependencies
 
