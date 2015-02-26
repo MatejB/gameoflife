@@ -16,66 +16,65 @@ func main() {
 	drawCh, exitCh, displayWidth, displayHeight := display()
 
 	w := NewWorld(displayWidth, displayHeight)
-	drawCh <- w.Plane
+	drawCh <- w.Field
 
 	go func() {
 		ticker := time.Tick(100 * time.Millisecond)
 		for _ = range ticker {
 			w.Tick()
-			drawCh <- w.Plane
+			drawCh <- w.Field
 		}
 	}()
 
 	<-exitCh
-	fmt.Println(w.LifeCycles, "life cycles")
+	fmt.Println(w.Cycles, "life cycles")
 }
 
 type World struct {
-	Plane      [][]bool
-	BackPlain  [][]bool
-	LifeCycles int
+	Field     [][]bool
+	BackField [][]bool
+	Cycles    int
 }
 
 func NewWorld(width, height int) (world *World) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	plane := make([][]bool, width)
+	field := make([][]bool, width)
+	fieldB := make([][]bool, width)
 
-	for i := range plane {
-		plane[i] = make([]bool, height)
-		for j := range plane[i] {
+	for i := range field {
+		field[i] = make([]bool, height)
+		fieldB[i] = make([]bool, height)
+		for j := range field[i] {
 			if r.Intn(10) > 5 {
-				plane[i][j] = true
+				field[i][j] = true
 			} else {
-				plane[i][j] = false
+				field[i][j] = false
 			}
 		}
 	}
 
-	return &World{plane, make([][]bool, 0), 0}
+	return &World{field, fieldB, 0}
 }
 
 func (w *World) Tick() {
-	w.BackPlain = make([][]bool, len(w.Plane))
-
-	for i := range w.Plane {
-		w.BackPlain[i] = make([]bool, len(w.Plane[i]))
-
-		for j := range w.Plane[i] {
+	for i := range w.Field {
+		for j := range w.Field[i] {
 			lnc := w.liveNeighbours(i, j)
-
-			if w.Plane[i][j] == true && (lnc == 2 || lnc == 3) {
-				w.BackPlain[i][j] = true
-			} else if w.Plane[i][j] == false && lnc == 3 {
-				w.BackPlain[i][j] = true
-			} else {
-				w.BackPlain[i][j] = false
+			switch {
+			case w.Field[i][j] == true && (lnc == 2 || lnc == 3):
+				w.BackField[i][j] = true
+			case w.Field[i][j] == false && lnc == 3:
+				w.BackField[i][j] = true
+			default:
+				w.BackField[i][j] = false
 			}
 		}
 	}
 
-	w.LifeCycles += 1
-	w.Plane = w.BackPlain
+	w.Cycles += 1
+
+	w.Field, w.BackField = w.BackField, w.Field
 }
 
 type cords struct {
@@ -89,8 +88,8 @@ func (w *World) liveNeighbours(x, y int) int {
 	isset := func(x, y int) bool {
 		if x < 0 ||
 			y < 0 ||
-			x+1 > len(w.Plane) ||
-			y+1 > len(w.Plane[x]) {
+			x+1 > len(w.Field) ||
+			y+1 > len(w.Field[x]) {
 			return false
 		}
 		return true
@@ -108,7 +107,7 @@ func (w *World) liveNeighbours(x, y int) int {
 
 	for _, combo := range neighboursCombos {
 		if isset(combo.X, combo.Y) {
-			if w.Plane[combo.X][combo.Y] == true {
+			if w.Field[combo.X][combo.Y] == true {
 				lnc = lnc + 1
 			}
 		}
