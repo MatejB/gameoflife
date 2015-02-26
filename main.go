@@ -1,73 +1,81 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/nsf/termbox-go"
 )
 
 func main() {
 	drawCh, exitCh, displayWidth, displayHeight := display()
 
-	w := initWorld(displayWidth, displayHeight)
+	w := NewWorld(displayWidth, displayHeight)
+	drawCh <- w.Plane
 
 	go func() {
-		for {
-			drawCh <- w
-			w = tick(w)
-			time.Sleep(100 * time.Millisecond)
+		ticker := time.Tick(100 * time.Millisecond)
+		for _ = range ticker {
+			w.Tick()
+			drawCh <- w.Plane
 		}
 	}()
 
 	<-exitCh
+	fmt.Println(w.LifeCycles, "life cycles")
 }
 
-func initWorld(width, height int) [][]bool {
+type World struct {
+	Plane      [][]bool
+	BackPlain  [][]bool
+	LifeCycles int
+}
+
+func NewWorld(width, height int) (world *World) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	w := make([][]bool, width)
+	plane := make([][]bool, width)
 
-	for i := range w {
-		w[i] = make([]bool, height)
-		for j := range w[i] {
+	for i := range plane {
+		plane[i] = make([]bool, height)
+		for j := range plane[i] {
 			if r.Intn(10) > 5 {
-				w[i][j] = true
+				plane[i][j] = true
 			} else {
-				w[i][j] = false
+				plane[i][j] = false
 			}
 		}
 	}
 
-	return w
+	return &World{plane, make([][]bool, 0), 0}
 }
 
-func tick(w [][]bool) [][]bool {
-	var newW [][]bool
+func (w *World) Tick() {
+	w.BackPlain = make([][]bool, len(w.Plane))
 
-	newW = make([][]bool, len(w))
+	for i := range w.Plane {
+		w.BackPlain[i] = make([]bool, len(w.Plane[i]))
 
-	for i := range w {
-		newW[i] = make([]bool, len(w[i]))
+		for j := range w.Plane[i] {
+			lnc := w.liveNeighbours(i, j)
 
-		for j := range w[i] {
-			lnc := liveNeighbours(w, i, j)
-
-			if w[i][j] == true && (lnc == 2 || lnc == 3) {
-				newW[i][j] = true
-			} else if w[i][j] == false && lnc == 3 {
-				newW[i][j] = true
+			if w.Plane[i][j] == true && (lnc == 2 || lnc == 3) {
+				w.BackPlain[i][j] = true
+			} else if w.Plane[i][j] == false && lnc == 3 {
+				w.BackPlain[i][j] = true
 			} else {
-				newW[i][j] = false
+				w.BackPlain[i][j] = false
 			}
 		}
 	}
 
-	return newW
+	w.LifeCycles += 1
+	w.Plane = w.BackPlain
 }
 
 type cords struct {
@@ -75,14 +83,14 @@ type cords struct {
 	Y int
 }
 
-func liveNeighbours(w [][]bool, x, y int) int {
+func (w *World) liveNeighbours(x, y int) int {
 	lnc := 0
 
-	isset := func(w [][]bool, x, y int) bool {
+	isset := func(x, y int) bool {
 		if x < 0 ||
 			y < 0 ||
-			x+1 > len(w) ||
-			y+1 > len(w[x]) {
+			x+1 > len(w.Plane) ||
+			y+1 > len(w.Plane[x]) {
 			return false
 		}
 		return true
@@ -99,8 +107,8 @@ func liveNeighbours(w [][]bool, x, y int) int {
 		{x + 1, y + 1}}
 
 	for _, combo := range neighboursCombos {
-		if isset(w, combo.X, combo.Y) {
-			if w[combo.X][combo.Y] == true {
+		if isset(combo.X, combo.Y) {
+			if w.Plane[combo.X][combo.Y] == true {
 				lnc = lnc + 1
 			}
 		}
@@ -109,9 +117,9 @@ func liveNeighbours(w [][]bool, x, y int) int {
 	return lnc
 }
 
-func display() (drawCh chan [][]bool, exitCh chan bool, displayWidth, displayHeight int) {
+func display() (drawCh chan [][]bool, exitCh chan struct{}, displayWidth, displayHeight int) {
 	drawCh = make(chan [][]bool)
-	exitCh = make(chan bool)
+	exitCh = make(chan struct{})
 
 	err := termbox.Init()
 	if err != nil {
@@ -131,17 +139,16 @@ func display() (drawCh chan [][]bool, exitCh chan bool, displayWidth, displayHei
 		}
 	}()
 
-	eventChan := make(chan termbox.Event)
+	eventCh := make(chan termbox.Event)
 	go func() {
 		for {
 			event := termbox.PollEvent()
-			eventChan <- event
+			eventCh <- event
 		}
 	}()
 
-	sigChan := make(chan os.Signal)
-	signal.Notify(sigChan, os.Interrupt)
-	signal.Notify(sigChan, os.Kill)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, os.Kill, syscall.SIGTERM)
 
 	go func() {
 		for {
@@ -157,23 +164,23 @@ func display() (drawCh chan [][]bool, exitCh chan bool, displayWidth, displayHei
 						termbox.SetCell(i, j, char, termbox.ColorWhite, termbox.ColorBlack)
 					}
 				}
-			case event := <-eventChan:
+			case event := <-eventCh:
 				switch event.Type {
 				case termbox.EventKey:
 					switch event.Key {
 					case termbox.KeyCtrlZ, termbox.KeyCtrlC:
 						termbox.Close()
-						exitCh <- true
+						close(exitCh)
 						return
 					}
 				case termbox.EventError: // quit
 					termbox.Close()
 					log.Fatalf("Quitting because of termbox error: \n%s\n", event.Err)
 				}
-			case signal := <-sigChan:
-				log.Printf("Have signal: \n%s", spew.Sdump(signal))
+			case signal := <-sigCh:
 				termbox.Close()
-				exitCh <- true
+				log.Printf("Recived signal: \n%s", signal)
+				close(exitCh)
 				return
 			}
 		}
